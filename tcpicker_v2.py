@@ -1023,6 +1023,29 @@ def build_exotic_cost_table(max_horses: int, unit: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+
+def estimate_exotic_payout(total_cost: float, bankroll: float, bet_type: str) -> Dict[str, float]:
+    """
+    Simple planning estimate for exotic bets.
+    This is NOT an official pari-mutuel payout. Actual payout depends on pool, takeout, odds, and winning tickets.
+    """
+    if bet_type == "Exacta Box":
+        multiplier_low, multiplier_mid, multiplier_high = 3, 8, 20
+    elif bet_type == "Trifecta Box":
+        multiplier_low, multiplier_mid, multiplier_high = 8, 25, 75
+    elif bet_type == "Superfecta Box":
+        multiplier_low, multiplier_mid, multiplier_high = 20, 80, 250
+    else:
+        multiplier_low, multiplier_mid, multiplier_high = 1, 1, 1
+
+    return {
+        "Low Estimate": round(total_cost * multiplier_low, 2),
+        "Middle Estimate": round(total_cost * multiplier_mid, 2),
+        "High Estimate": round(total_cost * multiplier_high, 2),
+        "Risk % of Bankroll": round((total_cost / bankroll * 100), 2) if bankroll else 0.0,
+    }
+
+
 st.set_page_config(page_title=APP_NAME, page_icon="🏇", layout="wide")
 require_login()
 
@@ -1173,6 +1196,36 @@ with tabs[1]:
     else:
         total_cost = bets["Cost"].sum()
         st.metric("Total Ticket Cost", f"${total_cost:,.2f}")
+
+        # Estimated payout planning for the generated ticket plan.
+        est_low = 0.0
+        est_mid = 0.0
+        est_high = 0.0
+        for _, b in bets.iterrows():
+            bet_name = str(b.get("Bet", ""))
+            cost = float(b.get("Cost", 0))
+            if bet_name == "Win":
+                horse_name = str(b.get("Horses", "")).split(",")[0].strip()
+                match = ranked[ranked["Horse"] == horse_name]
+                if not match.empty:
+                    odds = match.iloc[0]["Odds"]
+                    win_est = calculate_win_place_show(cost, odds, "Win")
+                    est_low += win_est["Estimated Return"]
+                    est_mid += win_est["Estimated Return"]
+                    est_high += win_est["Estimated Return"]
+            else:
+                p = estimate_exotic_payout(cost, bankroll, bet_name)
+                est_low += p["Low Estimate"]
+                est_mid += p["Middle Estimate"]
+                est_high += p["High Estimate"]
+
+        st.markdown("#### Estimated Payout Range for Recommended Plan")
+        rp1, rp2, rp3 = st.columns(3)
+        rp1.metric("Low Estimate", f"${est_low:,.2f}")
+        rp2.metric("Middle Estimate", f"${est_mid:,.2f}")
+        rp3.metric("High Estimate", f"${est_high:,.2f}")
+        st.caption("Plan payout estimates are rough planning numbers only; actual payouts depend on pari-mutuel pools and final odds.")
+
         st.dataframe(bets, use_container_width=True, hide_index=True)
 
     st.subheader("Auto Bet Calculator")
@@ -1244,6 +1297,15 @@ with tabs[1]:
             ec1.metric("Combinations", result["combinations"])
             ec2.metric("Unit", f"${result['unit']:,.2f}")
             ec3.metric("Total Cost", f"${result['total_cost']:,.2f}")
+
+            st.markdown("#### Estimated Payout Range")
+            payout_est = estimate_exotic_payout(result["total_cost"], bankroll, result["bet_type"])
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("Low Estimate", f"${payout_est['Low Estimate']:,.2f}")
+            pc2.metric("Middle Estimate", f"${payout_est['Middle Estimate']:,.2f}")
+            pc3.metric("High Estimate", f"${payout_est['High Estimate']:,.2f}")
+            pc4.metric("Risk % Bankroll", f"{payout_est['Risk % of Bankroll']}%")
+            st.caption("Exotic payout range is a planning estimate only. Actual pari-mutuel payouts depend on the pool, takeout, odds, and winning tickets.")
 
             if result["total_cost"] > bankroll:
                 st.error("This ticket costs more than your bankroll.")
